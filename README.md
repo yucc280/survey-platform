@@ -46,12 +46,10 @@ pro1/
 │   ├── package.json
 │   └── vite.config.js
 ├── docs/
-│   ├── assignment/         # 原始需求资料
 │   ├── design.md           # 系统、数据库与关键逻辑设计
 │   ├── api.md              # 接口与认证说明
 │   ├── testing.md          # 自动测试说明
 │   └── ai-log.md           # AI 使用日志
-├── AGENTS.md               # 开发协作规则
 ├── README.md
 └── .gitignore
 ```
