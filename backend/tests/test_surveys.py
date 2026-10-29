@@ -1,5 +1,6 @@
 """问卷草稿接口测试；可选真实 MongoDB 用唯一临时数据库隔离数据。"""
 import os
+import re
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -38,6 +39,34 @@ class CursorStub:
         return iter(self.rows)
 
 
+def matches_query(row, query):
+    """仅实现测试所需条件，数据库查询语义仍由真实MongoDB用例验证。"""
+    for key, expected in query.items():
+        if key == "$or":
+            if not any(matches_query(row, branch) for branch in expected):
+                return False
+            continue
+        actual = row
+        for part in key.split("."):
+            actual = actual.get(part) if isinstance(actual, dict) else None
+        if isinstance(expected, dict) and any(key.startswith("$") for key in expected):
+            if "$ne" in expected and actual == expected["$ne"]:
+                return False
+            if "$in" in expected and actual not in expected["$in"]:
+                return False
+            if "$elemMatch" in expected and not any(matches_query(item, expected["$elemMatch"]) for item in actual or []):
+                return False
+            if "$regex" in expected and (not isinstance(actual, str) or re.search(
+                    expected["$regex"], actual, re.I if "i" in expected.get("$options", "") else 0) is None):
+                return False
+        elif isinstance(actual, list) and not isinstance(expected, list):
+            if expected not in actual:
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
 class SurveysStub(UsersStub):
     def aggregate(self, pipeline):
         # 仅支持统计测试所需的 match/sort/group；真实库测试验证MongoDB管道本身。
@@ -72,17 +101,18 @@ class SurveysStub(UsersStub):
         self.find_one_and_update(query, update)
 
     def find(self, query, projection=None):
-        rows = [deepcopy(row) for row in self.rows
-                if all(row.get(key) == value for key, value in query.items())]
+        rows = [deepcopy(row) for row in self.rows if matches_query(row, query)]
         if projection:
-            for row in rows:
-                for key, include in projection.items():
-                    if not include:
+            if any(projection.values()):
+                rows = [{key: value for key, value in row.items() if key == "_id" or projection.get(key)} for row in rows]
+            else:
+                for row in rows:
+                    for key in projection:
                         row.pop(key, None)
         return CursorStub(rows)
 
     def count_documents(self, query):
-        return sum(all(row.get(key) == value for key, value in query.items()) for row in self.rows)
+        return sum(matches_query(row, query) for row in self.rows)
 
 
 class SurveyTests(unittest.TestCase):
@@ -100,7 +130,7 @@ class SurveyTests(unittest.TestCase):
             self.database = mongo[database_name]
             self.addCleanup(mongo.drop_database, database_name)
         else:
-            self.database = SimpleNamespace(users=UsersStub(), surveys=SurveysStub(), responses=SurveysStub())
+            self.database = SimpleNamespace(users=UsersStub(), surveys=SurveysStub(), responses=SurveysStub(), questions=SurveysStub(), question_banks=SurveysStub())
         self.alice = ObjectId()
         self.bob = ObjectId()
         for user_id, name in [(self.alice, "Alice"), (self.bob, "Bob")]:

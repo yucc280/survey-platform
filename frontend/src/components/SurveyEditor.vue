@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { formatTime, surveyStatus } from '../api.js'
+import QuestionVersionPicker from './QuestionVersionPicker.vue'
+import QuestionContentFields from './QuestionContentFields.vue'
 
 const props = defineProps({ survey: { type: Object, required: true }, api: { type: Function, required: true } })
 const emit = defineEmits(['saved', 'notice'])
@@ -12,6 +14,9 @@ const newType = ref('single')
 const actionDialog = ref(null)
 const action = ref('publish')
 const deadline = ref('')
+const picking = ref(null)
+const exportTarget = ref(null)
+const sourcePreview = ref(null)
 let alive = true
 onUnmounted(() => { alive = false })
 const labels = { single: '单选题', multiple: '多选题', text: '文本填空', number: '数字填空' }
@@ -28,6 +33,30 @@ const editable = computed(() => props.survey.status === 'draft')
 // 没有后端生成的稳定ID时，先保存题目，再配置跨题引用。
 const structureSaved = computed(() => form.value.questions.every(q => q.id && q.options.every(o => o.id)))
 const canChangeDeadline = computed(() => props.survey.status === 'published' && surveyStatus(props.survey).tone === 'published')
+
+async function saveReusable(question) {
+  if (busy.value || dirty.value || !question.id || question.source) return
+  busy.value = true; error.value = ''
+  try {
+    await props.api(`/surveys/${props.survey.id}/questions/${question.id}/save-to-library`, { method: 'POST' })
+    if (!alive) return
+    const survey = await props.api(`/surveys/${props.survey.id}`)
+    if (!alive) return
+    emit('saved', survey)
+    exportTarget.value = null
+    emit('notice', '已转为可复用题目 v1，当前问卷已关联，历史答案可参与全局统计。')
+  } catch (e) { if (alive) { error.value = e.message; emit('notice', e.message, 'error') } }
+  finally { if (alive) busy.value = false }
+}
+async function viewSource(question) {
+  if (busy.value) return
+  busy.value = true; error.value = ''; sourcePreview.value = null
+  try {
+    const version = await props.api(`/questions/${question.source.question_id}/versions/${question.source.version_id}`)
+    if (alive) sourcePreview.value = { id: question.source.question_id, version }
+  } catch (e) { if (alive) error.value = e.message }
+  finally { if (alive) busy.value = false }
+}
 
 function move(items, index, step) {
   const target = index + step
@@ -83,6 +112,22 @@ async function save() {
     emit('notice', '草稿已保存，可以继续配置跳转或发布。')
   } catch (e) { if (alive) { error.value = e.message; emit('notice', e.message, 'error') } }
   finally { busy.value = false }
+}
+async function selectVersion(reference) {
+  if (busy.value || dirty.value) return
+  busy.value = true; error.value = ''
+  try {
+    const existing = picking.value !== 'new' ? picking.value : null
+    const saved = await props.api(existing
+      ? `/surveys/${props.survey.id}/questions/${existing.id}/source`
+      : `/surveys/${props.survey.id}/library-questions`, {
+      method: existing ? 'PUT' : 'POST', body: reference,
+    })
+    if (!alive) return
+    picking.value = null
+    emit('saved', saved); emit('notice', '固定版本已保存到问卷，是否必答和跳转可继续配置。')
+  } catch (e) { if (alive) error.value = e.message }
+  finally { if (alive) busy.value = false }
 }
 function openAction(kind) {
   action.value = kind
@@ -147,22 +192,33 @@ function ruleText(rule, q) {
               <button type="button" class="text-button danger-text" @click="form.questions.splice(index, 1)">删除题目</button>
             </div>
           </div>
-          <label v-if="editable">题干<input v-model="q.title" maxlength="200" required /></label><h4 v-else>{{ q.title }}</h4>
+          <p v-if="q.source" class="field-hint">可复用题目 · v{{ q.source.version_number }} · 版本内容固定，题库更新不会自动替换。<button type="button" class="text-button" :disabled="busy" @click="viewSource(q)">查看来源题目</button> <button v-if="editable" type="button" class="text-button" :disabled="dirty || busy" @click="picking = q">选择其他版本</button></p>
+          <div v-else class="form-stack">
+            <template>
+              <button type="button" class="button secondary compact" :disabled="busy || dirty || !q.id" @click="exportTarget = q.id">保存为可复用题目</button>
+              <p v-if="dirty || !q.id" class="field-hint">请先保存问卷修改，再保存为可复用题目。</p>
+              <div v-if="exportTarget === q.id" class="form-stack">
+                <p class="field-hint">将当前题转为可复用 v1，并关联当前问卷和历史答案。原题内容、必答和跳转保持不变。</p>
+                <div class="editor-row"><button type="button" class="button primary compact" :disabled="busy || dirty" @click="saveReusable(q)">确认转为可复用题目</button><button type="button" class="button secondary compact" :disabled="busy" @click="exportTarget = null">取消</button></div>
+              </div>
+            </template>
+          </div>
+          <label v-if="editable">题干<input v-model="q.title" maxlength="200" required :disabled="!!q.source" /></label><h4 v-else>{{ q.title }}</h4>
           <label class="check-label"><input v-model="q.required" type="checkbox" :disabled="!editable" />必答</label>
           <div v-if="q.type === 'single' || q.type === 'multiple'" class="option-editor">
             <div v-for="(option, oi) in q.options" :key="option.id || `new-${oi}`" class="editor-row option-row">
-              <label>选项 {{ oi + 1 }}<input v-if="editable" v-model="option.label" maxlength="100" required /><span v-else>{{ option.label }}</span></label>
-              <button v-if="editable" class="text-button danger-text" type="button" :disabled="q.options.length <= 2" @click="q.options.splice(oi, 1)">删除选项</button>
+              <label>选项 {{ oi + 1 }}<input v-if="editable" v-model="option.label" maxlength="100" required :disabled="!!q.source" /><span v-else>{{ option.label }}</span></label>
+              <button v-if="editable && !q.source" class="text-button danger-text" type="button" :disabled="q.options.length <= 2" @click="q.options.splice(oi, 1)">删除选项</button>
             </div>
-            <button v-if="editable" class="button secondary compact" type="button" :disabled="q.options.length >= 30" @click="q.options.push({ label: '' })">添加选项</button>
+            <button v-if="editable && !q.source" class="button secondary compact" type="button" :disabled="q.options.length >= 30" @click="q.options.push({ label: '' })">添加选项</button>
           </div>
-          <div class="validation-grid">
+          <fieldset class="editor-fieldset validation-grid" :disabled="!!q.source">
             <template v-if="q.type === 'multiple'"><label>最少选择（可空）<input v-model.number="q.validation.min_choices" type="number" min="0" :max="q.options.length" step="1" :disabled="!editable" /></label><label>最多选择（可空）<input v-model.number="q.validation.max_choices" type="number" min="0" :max="q.options.length" step="1" :disabled="!editable" /></label></template>
             <template v-if="q.type === 'text'"><label>最少字符（可空）<input v-model.number="q.validation.min_length" type="number" min="0" step="1" :disabled="!editable" /></label><label>最多字符（可空）<input v-model.number="q.validation.max_length" type="number" min="0" step="1" :disabled="!editable" /></label></template>
             <template v-if="q.type === 'number'"><label>最小值（可空）<input v-model.number="q.validation.min_value" type="number" step="any" :disabled="!editable" /></label><label>最大值（可空）<input v-model.number="q.validation.max_value" type="number" step="any" :disabled="!editable" /></label>
               <label class="check-label"><input v-model="q.validation.integer_only" type="checkbox" :disabled="!editable || q.validation.phone_format" />仅允许整数</label><label class="check-label"><input v-model="q.validation.phone_format" type="checkbox" :disabled="!editable" @change="q.validation.phone_format && (q.validation.integer_only = true)" />校验11位手机号格式</label>
             </template>
-          </div>
+          </fieldset>
           <section class="rules-section">
             <h5>跳转规则</h5><p class="field-hint">按顺序判断，首条命中生效；未命中则进入下一题。</p>
             <p v-if="q.type === 'text'" class="muted">文本题按顺序进入下一题。</p>
@@ -186,6 +242,8 @@ function ruleText(rule, q) {
           </section>
         </article>
         <template v-if="editable">
+          <button class="button secondary" type="button" :disabled="dirty || busy || form.questions.length >= 100" @click="picking = 'new'">选入可复用题目</button>
+          <p class="field-hint">选题或替换版本前请先保存当前问卷；选择确认后直接保存到草稿。</p>
           <div class="editor-row"><label>新题型<select v-model="newType"><option v-for="(label, type) in labels" :key="type" :value="type">{{ label }}</option></select></label><button class="button secondary" type="button" :disabled="form.questions.length >= 100" @click="addQuestion">添加题目</button></div>
           <p class="field-hint">先保存新题目和选项，再配置跳转。删除、重排题目或删除选项后，请同时修正引用它们的规则；保存时后端会检查。</p>
           <div class="editor-row"><button class="button primary" type="submit">{{ busy ? '处理中…' : '保存草稿' }}</button><button class="button secondary" type="button" :disabled="dirty || !form.questions.length" @click="openAction('publish')">发布问卷</button></div>
@@ -198,6 +256,12 @@ function ruleText(rule, q) {
         </template>
       </fieldset>
     </form>
+    <QuestionVersionPicker v-if="picking && editable" :key="picking === 'new' ? 'new' : picking.id" :api="api" :source="picking === 'new' ? undefined : picking.source" :disabled="busy || dirty" @select="selectVersion" @cancel="picking = null" />
+    <section v-if="sourcePreview" class="question-card" aria-label="可复用题目预览">
+      <div class="editor-toolbar"><h4>可复用题目 · v{{ sourcePreview.version.number }}</h4><button type="button" class="button secondary compact" @click="sourcePreview = null">收起题目预览</button></div>
+      <p class="field-hint">题目 ID：{{ sourcePreview.id }}。可在左侧“我的题目”管理自己创建的题目；已有问卷不会自动更新版本。</p>
+      <QuestionContentFields :content="sourcePreview.version.content" disabled />
+    </section>
     <p v-if="error" class="inline-error" role="alert">{{ error }}</p>
     <dialog ref="actionDialog" class="create-dialog" @cancel="busy && $event.preventDefault()">
       <form @submit.prevent="performAction">

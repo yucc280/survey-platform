@@ -1,18 +1,21 @@
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { displayAnswer, questionLabels } from '../utils/answerFlow.js'
+import QuestionInsights from '../components/QuestionInsights.vue'
 
 const props = defineProps({ survey: { type: Object, required: true }, api: { type: Function, required: true } })
 const result = ref(null)
 const selectedQuestion = ref('')
 const loading = ref(false)
 const error = ref('')
+const insightSource = ref(null)
+const sourceFor = q => props.survey.questions.find(item => item.id === q.question_id)?.source
 let requestVersion = 0
 let alive = true
 onUnmounted(() => { alive = false; requestVersion++ })
 const questions = computed(() => result.value ? result.value.questions || [result.value.question] : [])
 const sampleQuestions = computed(() => selectedQuestion.value ? props.survey.questions.filter(q => q.id === selectedQuestion.value) : props.survey.questions)
-watch(() => props.survey.id, () => { selectedQuestion.value = ''; load() }, { immediate: true })
+watch(() => props.survey.id, () => { selectedQuestion.value = ''; insightSource.value = null; load() }, { immediate: true })
 watch(selectedQuestion, load)
 async function load() {
   const version = ++requestVersion
@@ -44,10 +47,12 @@ function responseAnswer(sample, question) {
       <p v-if="!result.participant_count" class="muted">暂无成功提交的答卷。</p>
       <article v-for="q in questions" :key="q.question_id" class="question-card">
         <span class="question-type">{{ questionLabels[q.type] }}</span><h4>{{ q.title }}</h4><p class="muted">有效回答：{{ q.answered_count }} 人</p>
+        <button v-if="sourceFor(q)" class="button secondary compact" type="button" @click="insightSource = sourceFor(q)">查看该题全局统计（v{{ sourceFor(q).version_number }}）</button>
         <div v-if="q.type === 'single' || q.type === 'multiple'" class="option-counts"><div v-for="option in q.options" :key="option.id" class="option-count"><span>{{ option.label }}</span><meter min="0" :max="Math.max(1, q.answered_count)" :value="option.count" :aria-label="`${option.label}：${option.count}人`"></meter><strong>{{ option.count }} 人</strong></div><p v-if="q.type === 'multiple'" class="field-hint">每项统计选择人数，多选各项人数之和可能超过有效回答人数。</p></div>
         <template v-else><p v-if="q.type === 'number'">平均值：<strong>{{ q.average === null ? '暂无数据' : q.average_display }}</strong></p><details v-if="q.values.length"><summary>查看回答内容（{{ q.values.length }} 条）</summary><ul class="value-list"><li v-for="(value, i) in q.values" :key="i" class="answer-text">{{ value }}</li></ul></details><p v-else class="muted">暂无有效回答。</p></template>
       </article>
-      <section class="latest-samples"><h3>最新答卷样本</h3><p class="field-hint">只展示每个账号的最新答卷；匿名样本不显示用户名。</p>
+      <template v-if="insightSource"><button class="text-button" @click="insightSource = null">收起全局分析</button><QuestionInsights :key="`${insightSource.question_id}-${insightSource.version_id}`" :api="api" :question-id="insightSource.question_id" :version-id="insightSource.version_id" /></template>
+      <section class="latest-samples"><h3>本问卷最新答卷样本</h3><p class="field-hint">只展示本问卷每个账号的最新答卷；匿名样本不显示用户名。</p>
         <details v-for="(sample, index) in result.latest_responses" :key="index" class="sample-card"><summary>样本 {{ index + 1 }} · {{ sample.is_anonymous ? '匿名填写者' : sample.username || '用户名不可用' }}</summary><dl><div v-for="q in sampleQuestions" :key="q.id" class="sample-answer"><dt>{{ q.title }}</dt><dd class="answer-text">{{ responseAnswer(sample, q) }}</dd></div></dl></details>
       </section>
     </template>

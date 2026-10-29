@@ -3,6 +3,8 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import SurveyEditor from './components/SurveyEditor.vue'
 import SurveyFill from './pages/SurveyFill.vue'
 import SurveyStatistics from './pages/SurveyStatistics.vue'
+import QuestionLibrary from './pages/QuestionLibrary.vue'
+import QuestionBanks from './pages/QuestionBanks.vue'
 import { formatTime, request, surveyStatus } from './api.js'
 
 const origin = window.location.origin
@@ -28,6 +30,9 @@ const offset = ref(0)
 const pageSize = 10
 const selected = ref(null)
 const selectedPanel = ref('details')
+const workspaceTab = ref('surveys')
+const initialQuestionId = ref('')
+function openQuestion(id = '') { initialQuestionId.value = id; workspaceTab.value = 'questions' }
 // 当前只有工作台与填写链接两种入口，用原生链接导航即可，无需引入路由库。
 const fillSurveyId = window.location.pathname.match(/^\/survey\/([^/]+)\/?$/)?.[1] || ''
 const createDialog = ref(null)
@@ -223,8 +228,10 @@ onMounted(async () => {
       <SurveyFill v-else-if="fillSurveyId" :key="`${user.id}-${fillSurveyId}`" :survey-id="fillSurveyId" :api="api" @notice="notify" />
 
       <div v-else class="workspace">
-        <aside class="sidebar"><div class="sidebar-caption">问卷管理</div><div class="nav-current">我的问卷 <span>{{ total }}</span></div><p class="sidebar-note">只显示当前账号创建的问卷。</p></aside>
-        <section class="workspace-content">
+        <aside class="sidebar"><div class="sidebar-caption">工作台</div><button class="workspace-nav" :class="{ 'nav-current': workspaceTab === 'surveys' }" @click="workspaceTab = 'surveys'">我的问卷 <span>{{ total }}</span></button><button class="workspace-nav" :class="{ 'nav-current': workspaceTab === 'questions' }" @click="openQuestion()">我的题目</button><button class="workspace-nav" :class="{ 'nav-current': workspaceTab === 'banks' }" @click="workspaceTab = 'banks'">我的题库</button><p class="sidebar-note">问卷内仍可直接创建临时题目。</p></aside>
+        <QuestionLibrary v-if="workspaceTab === 'questions'" :key="`${user.id}-${initialQuestionId}`" :api="api" :user-id="user.id" :initial-question-id="initialQuestionId" @notice="notify" />
+        <QuestionBanks v-else-if="workspaceTab === 'banks'" :key="user.id" :api="api" @notice="notify" @open-question="openQuestion" />
+        <section v-else class="workspace-content">
           <div class="page-heading"><div><p class="eyebrow">工作台</p><h1>我的问卷</h1><p class="muted">共 {{ total }} 份问卷</p></div><button class="button primary" @click="openCreate">＋ 新建问卷</button></div>
           <section class="panel list-panel" aria-labelledby="list-title">
             <div class="panel-heading"><h2 id="list-title">问卷列表</h2><button class="button ghost compact" :disabled="listBusy" @click="loadSurveys()">{{ listBusy ? '加载中…' : '刷新列表' }}</button></div>

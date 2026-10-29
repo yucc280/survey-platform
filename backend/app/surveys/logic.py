@@ -29,6 +29,20 @@ def draft_questions(inputs: list[QuestionInput], previous: list[dict]) -> list[d
         old = old_questions.get(question.id) if question.id is not None else None
         if question.id is not None and old is None:
             raise HTTPException(422, "题目ID不属于当前草稿；新增题目请省略id")
+        if old and old.get("source"):
+            # 原引用依赖已保存快照，不因题目后来移出题库而失效。
+            incoming = question.model_dump(exclude_none=True)
+            fields = ["type", "title", "options", "validation", "source"]
+            if any(incoming.get(key) != old.get(key) for key in fields):
+                raise HTTPException(422, "引用题目的版本内容不能直接修改或解除来源，请通过版本选择替换")
+            kept = deepcopy(old)
+            kept["required"] = question.required
+            if "jump_rules" in question.model_fields_set:
+                kept["jump_rules"] = [rule.model_dump(exclude_none=True) for rule in question.jump_rules]
+            result.append(kept)
+            continue
+        if question.source is not None or any(option.source_option_id is not None for option in question.options):
+            raise HTTPException(422, "新增版本引用请使用选题接口，不能自行标记来源")
         old_option_ids = {option["id"] for option in old.get("options", [])} if old else set()
         options = []
         for option in question.options:

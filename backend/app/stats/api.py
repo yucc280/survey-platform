@@ -1,5 +1,6 @@
 """创建者统计：MongoDB按账号选最新整份答卷，再计算各题结果。"""
 from decimal import Decimal
+from collections import Counter
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -56,12 +57,23 @@ class SingleQuestionStatistics(BaseModel):
     latest_responses: list[PublicLatestResponse]
 
 
-def latest_samples(database, survey_id):
-    groups = list(database.responses.aggregate([
+def latest_response_groups(database, survey_id):
+    """每账号最新整份答卷；不查询用户名，供本卷与全局统计共用。"""
+    return database.responses.aggregate([
         {"$match": {"survey_id": survey_id}},
         {"$sort": {"user_id": 1, "submitted_at": -1, "_id": -1}},
         {"$group": {"_id": "$user_id", "latest": {"$first": "$$ROOT"}, "submission_count": {"$sum": 1}}},
-    ]))
+    ])
+
+
+def number_average(counts):
+    """按数值频次计算均值，避免有限大数直接相加溢出。"""
+    count = sum(counts.values())
+    return float(sum((Decimal(str(value)) * times for value, times in counts.items()), Decimal(0)) / count) if count else None
+
+
+def latest_samples(database, survey_id):
+    groups = list(latest_response_groups(database, survey_id))
     total = sum(group["submission_count"] for group in groups)
     latest = sorted((group["latest"] for group in groups),
                     key=lambda row: (row["submitted_at"], row["_id"]), reverse=True)
@@ -93,7 +105,7 @@ def question_statistics(question: dict, latest: list[dict]) -> dict:
         result["values"] = values
         if question["type"] == "number":
             # Decimal累加避免两个很大的有限浮点数相加变成Infinity。
-            average = float(sum((Decimal(str(value)) for value in values), Decimal(0)) / len(values)) if values else None
+            average = number_average(Counter(values))
             result["average"] = average
             result["average_display"] = str(average) if average is not None else "暂无数据"
     return result

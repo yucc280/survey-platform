@@ -33,6 +33,10 @@ def create_lifespan(test_database=None, test_secret: str | None = None):
             # 唯一约束交给数据库，防止并发注册造成同名账号。
             database.users.create_index([("username", ASCENDING)], unique=True)
             database.surveys.create_index([("owner_id", ASCENDING), ("created_at", DESCENDING)])
+            database.questions.create_index([("owner_id", ASCENDING), ("created_at", DESCENDING)])
+            database.question_banks.create_index("question_ids")
+            database.question_banks.create_index([("owner_id", ASCENDING), ("created_at", DESCENDING)])
+            database.surveys.create_index("questions.source.question_id")
             database.responses.create_index(
                 [("survey_id", ASCENDING), ("user_id", ASCENDING)], unique=True,
                 partialFilterExpression={"single_submission": True}, name="one_submission_per_user",

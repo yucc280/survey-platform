@@ -57,7 +57,7 @@ class AuthTests(unittest.TestCase):
     def setUp(self):
         self.users = UsersStub()
         self.secret = "test-only-secret-" * 4
-        self.client = TestClient(create_app(SimpleNamespace(users=self.users, surveys=UsersStub(), responses=UsersStub()), self.secret))
+        self.client = TestClient(create_app(SimpleNamespace(users=self.users, surveys=UsersStub(), responses=UsersStub(), questions=UsersStub(), question_banks=UsersStub()), self.secret))
         self.client.__enter__()
         self.addCleanup(self.client.__exit__, None, None, None)
 

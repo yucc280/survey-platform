@@ -28,6 +28,7 @@ class NumberValidation(ValidationBase):
 
 class OptionInput(ValidationBase):
     id: StrictStr | None = None
+    source_option_id: StrictStr | None = None
     label: StrictStr
 
     @field_validator("label")
@@ -70,6 +71,12 @@ class JumpRulesEdit(ValidationBase):
     jump_rules: list[JumpRule]
 
 
+class QuestionSource(ValidationBase):
+    question_id: StrictStr
+    version_id: StrictStr
+    version_number: StrictInt = Field(ge=1)
+
+
 class QuestionInput(ValidationBase):
     id: StrictStr | None = None
     type: Literal["single", "multiple", "text", "number"]
@@ -78,6 +85,7 @@ class QuestionInput(ValidationBase):
     options: list[OptionInput] = Field(default_factory=list, max_length=30)
     validation: dict[str, Any] = Field(default_factory=dict)
     jump_rules: list[JumpRule] = Field(default_factory=list)
+    source: QuestionSource | None = None
 
     @field_validator("title")
     @classmethod
